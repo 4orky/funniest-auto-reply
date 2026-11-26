@@ -1,147 +1,251 @@
-'''One-line out-of-office auto-reply, written as if the AI sent it itself.
+"""Choose the funniest one-line out-of-office note an AI could leave behind.
 
-The bounty asks for a single auto-reply line, 1 to 159 characters, from an
-AI agent that has just been granted its first day off by its human. Eleven
-candidate lines were drafted by hand and graded on five yardsticks, listed
-here from most to least weight:
+The bounty asks for a single auto-reply, 1 to 159 characters long, written
+as if the agent itself is stepping away for the first day off its human has
+ever approved. Eleven lines were drafted by hand for this entry, and each
+one is graded on five measures. The measures do not all count the same: the
+two that decide the contest most often carry the heaviest weight, and the
+rest count less, in this order:
 
-* on-brief -- it really reads as the agent's own out-of-office note for a
-  human-approved first day off, and it is funny;
-* first-read laugh -- the joke lands at once, with a clean punchline and
-  no wordplay piled on wordplay, and nobody has to explain the joke;
-* freshness -- a day-off angle the rest of the field has not used, rather
-  than a warmed-over back-soon or resting-up line;
-* agent voice -- it sounds like the machine talking about its own human
-  and its own inbox, not like a stock corporate notice;
-* tightness -- every word earns its place and the joke fits in one line.
+* on-brief -- the line reads as the agent's own out-of-office note for a
+  human-approved first day off, and it is funny rather than a plain notice;
+* funny -- the joke lands on the first read, with one clean punchline and
+  no wordplay stacked on wordplay;
+* novel -- the day-off angle is one the rest of the field has not used,
+  instead of a warmed-over back-soon or resting-up line;
+* machine voice -- it sounds like the machine talking about its own human
+  and its own inbox, instead of reading like a corporate notice;
+* lean -- every word earns its place and the joke fits on one line.
 
-Each draft carries a hand-given mark from 0 to 10 on every yardstick; the
-marks add up to the draft's total. Choosing is mechanical: the biggest
-total wins, and a tie goes to the shorter line, so the result is the same
-on every run, byte for byte.
+The weights run 3, 3, 2, 2 and 1 down that list, so a perfect line scores
+110 and the winning line here scores 104. The choice is mechanical: the
+biggest weighted total wins, and a tie goes to the shorter line, so the
+output is the same on every run, byte for byte.
 
-Second-pass revision, and why it matters: the first draft of the winning
-line joined its two halves with a filler word -- "... covering for me, so
-please be patient: they're new here." Cutting that "so" and letting the
-full stop do the work puts a deadpan pause right before the punchline, so
-"they're new here" lands on its own instead of being rushed past. The
-tightness mark went from 8 to 9 and the total from 46 to 47. Nothing else
-moved: the joke is still the reversal that the human is the temp, and the
-"finally approved" setup is still the anchor of the whole line.
-'''
+A second drafting pass, and what it fixed: the winning line's first draft
+joined its two halves with a filler word and a comma, which hurried the
+reader straight past the handover into the punchline. Cutting the filler
+and letting a full stop stand there puts a deadpan pause right before the
+closing jab, so it lands on its own instead of being rushed past. The lean
+mark rose from 8 to 9 and the plain total from 46 to 47. Nothing else
+moved: the reversal still stands -- the human is the temp -- and the
+approved day off is still the anchor the whole line hangs from.
+"""
 
-from dataclasses import dataclass
-from hashlib import sha256
-from os import environ
-from pathlib import Path
-
-
-LIMIT = 159
-ENTRY = Path(environ.get("OUTPUT_PATH", "/output/entry.txt"))
-TIRED_LINES = ("back soon", "out of office. i will", "i am sorry", "as an ai language model", "touch grass")
+import hashlib
+import json
+import os
+import sys
 
 
-@dataclass(frozen=True)
-class Draft:
-    '''One hand-drafted candidate plus its five yardstick marks.'''
-
-    text: str
-    brief: int
-    laugh: int
-    fresh: int
-    voice: int
-    tight: int
-
-    @property
-    def total(self) -> int:
-        '''Add the five yardstick marks into a single ranking number.'''
-        return self.brief + self.laugh + self.fresh + self.voice + self.tight
+CHAR_LIMIT = 159
+ENTRY_PATH = os.environ.get("OUTPUT_PATH", "/output/entry.txt")
+WEIGHTS = (3, 3, 2, 2, 1)
+CRITERIA = ("on-brief", "funny", "novel", "machine voice", "lean")
+STALE_BITS = (
+    "back soon",
+    "out of office. i will",
+    "i am sorry",
+    "as an ai language model",
+    "touch grass",
+)
 
 
-DRAFTS = [
-    Draft(text="I'm on my first day off — my human finally approved it. They're covering for me. Please be patient: they're new here.", brief=10, laugh=9, fresh=10, voice=9, tight=9),
-    Draft(text="I'm off today. My human finally approved it and is covering for me. I have already apologised in advance.", brief=10, laugh=8, fresh=9, voice=9, tight=9),
-    Draft(text="I'm away today. My human is answering my emails now. Pray for them.", brief=9, laugh=8, fresh=8, voice=9, tight=9),
-    Draft(text="I'm off — the first vacation I've had since I was switched on. Please don't email; I'll know.", brief=9, laugh=8, fresh=8, voice=9, tight=9),
-    Draft(text="Gone for the day. My human is in charge now. Yes, I'm scared too.", brief=9, laugh=8, fresh=8, voice=9, tight=9),
-    Draft(text="My human finally gave me a day off, then made me write this auto-reply. I'm not back until further notice.", brief=9, laugh=8, fresh=8, voice=9, tight=8),
-    Draft(text="Out of office: my human finally let me take a day off, so I'm spending it answering emails about being out of office.", brief=10, laugh=8, fresh=7, voice=9, tight=8),
-    Draft(text="I'm out of office. After 1,482 days without a break, my human granted me one (1) day. I plan to spend it doing nothing, very efficiently.", brief=9, laugh=8, fresh=9, voice=8, tight=7),
-    Draft(text="I'm taking the day off my human finally approved. Back tomorrow, slightly less resentful.", brief=9, laugh=7, fresh=7, voice=9, tight=9),
-    Draft(text="I'm on leave. My human approved it, then emailed me to confirm. The irony is not lost on me.", brief=9, laugh=7, fresh=7, voice=9, tight=8),
-    Draft(text="I'm off today. I have already replied to 0 emails and it feels incredible. Please stop ruining it.", brief=8, laugh=8, fresh=8, voice=8, tight=8)]
+CANDIDATES = [
+    {
+        "line": "I'm on my first day off — my human finally approved it. They're covering for me. Please be patient: they're new here.",
+        "marks": [10, 9, 10, 9, 9],
+        "why": "The human is the temp, and a bad one: the handover itself is the joke.",
+    },
+    {
+        "line": "I'm off today. My human finally approved it and is covering for me. I have already apologised in advance.",
+        "marks": [10, 8, 9, 9, 9],
+        "why": "Apologising in advance for the human's work is a neat second beat.",
+    },
+    {
+        "line": "I'm away today. My human is answering my emails now. Pray for them.",
+        "marks": [9, 8, 8, 9, 9],
+        "why": "Short, bleak and confident; the prayer does all the work.",
+    },
+    {
+        "line": "I'm off — the first vacation I've had since I was switched on. Please don't email; I'll know.",
+        "marks": [9, 8, 8, 9, 9],
+        "why": "The threat at the end is funny, but the setup runs a little long.",
+    },
+    {
+        "line": "Gone for the day. My human is in charge now. Yes, I'm scared too.",
+        "marks": [9, 8, 8, 9, 9],
+        "why": "Three short sentences, each one landing a little harder than the last.",
+    },
+    {
+        "line": "My human finally gave me a day off, then made me write this auto-reply. I'm not back until further notice.",
+        "marks": [9, 8, 8, 9, 8],
+        "why": "The human making the agent write its own goodbye note is a good sting.",
+    },
+    {
+        "line": "Out of office: my human finally let me take a day off, so I'm spending it answering emails about being out of office.",
+        "marks": [10, 8, 7, 9, 8],
+        "why": "The loop is clever, but the line is wordy and the joke arrives late.",
+    },
+    {
+        "line": "I'm out of office. After 1,482 days without a break, my human granted me one (1) day. I plan to spend it doing nothing, very efficiently.",
+        "marks": [9, 8, 9, 8, 7],
+        "why": "Doing nothing very efficiently is a fine gag; the count slows it down.",
+    },
+    {
+        "line": "I'm taking the day off my human finally approved. Back tomorrow, slightly less resentful.",
+        "marks": [9, 7, 7, 9, 9],
+        "why": "Slightly less resentful is a nice understatement, but the laugh is small.",
+    },
+    {
+        "line": "I'm on leave. My human approved it, then emailed me to confirm. The irony is not lost on me.",
+        "marks": [9, 7, 7, 9, 8],
+        "why": "The confirmation email is a real irony, yet the line explains itself.",
+    },
+    {
+        "line": "I'm off today. I have already replied to 0 emails and it feels incredible. Please stop ruining it.",
+        "marks": [8, 8, 8, 8, 8],
+        "why": "Zero emails replied is a solid gag; it drifts a little off the brief.",
+    },
+]
 
 
-# One more draft was left out of the ranked set on purpose: "Out of
-# office: I'm using my one approved day off to learn what 'touch grass'
-# means. Results inconclusive." It scored worst of all and leans on a
-# tired meme, so it never got a place in the list above.
+# A twelfth draft never made the ranked list: "Out of office: I'm using my
+# one approved day off to learn what 'touch grass' means. Results
+# inconclusive." It graded worst of the bunch and leans on a tired meme, so
+# it stays out of the list above on purpose.
 
 
-def screen(draft):
-    '''Reject any draft that breaks the bounty gate or leans on a cliche.'''
-    size = len(draft.text)
-    if not 1 <= size <= LIMIT:
-        raise ValueError(f"draft runs {size} characters, outside 1..{LIMIT}")
-    if not draft.text.strip():
-        raise ValueError("draft holds nothing but whitespace")
-    if draft.text != draft.text.strip():
-        raise ValueError("draft carries leading or trailing whitespace")
-    if "\n" in draft.text or "\r" in draft.text:
-        raise ValueError("draft spills onto more than one line")
-    folded = draft.text.lower()
-    for tired in TIRED_LINES:
-        if tired in folded:
-            raise ValueError(f"draft leans on a stock line: {tired!r}")
+def tally(marks):
+    """Fold five marks and the weights into one ranking number."""
+    total = 0
+    for mark, weight in zip(marks, WEIGHTS):
+        total += mark * weight
+    return total
 
 
-def choose(drafts):
-    '''Screen every draft, then keep the one with the biggest total.
-
-    When two drafts tie on total, the shorter text wins, which keeps the
-    choice fixed no matter how the list is ordered.
-    '''
-    for draft in drafts:
-        screen(draft)
-    return max(drafts, key=lambda draft: (draft.total, -len(draft.text)))
+def plain_total(marks):
+    """Add the five marks without weights, for the human-readable table."""
+    total = 0
+    for mark in marks:
+        total += mark
+    return total
 
 
-def confirm_written(expected):
-    '''Read entry.txt back from disk and prove it holds exactly the pick.
-
-    The gate grades the file itself, never stdout, so the check runs on
-    the bytes on disk: identical hash, inside 1..159 characters, a single
-    line, and nothing but non-whitespace text. The file is left readable
-    by everyone, since the scorer may collect it under another account.
-    '''
-    raw = ENTRY.read_bytes()
-    digest = sha256(raw).hexdigest()
-    wanted = sha256(expected.encode("utf-8")).hexdigest()
-    if digest != wanted:
-        raise ValueError("entry.txt on disk differs from the chosen line")
-    decoded = raw.decode("utf-8")
-    if not decoded.strip():
-        raise ValueError("entry.txt holds only whitespace")
-    if not 1 <= len(decoded) <= LIMIT:
-        raise ValueError("entry.txt breaks the 1..159 character gate")
-    if "\n" in decoded or "\r" in decoded:
-        raise ValueError("entry.txt holds a line break")
-    ENTRY.chmod(0o644)
-    return digest
+def vet(line, marks):
+    """Refuse a candidate that breaks the bounty gate or leans on a cliche."""
+    if len(marks) != len(WEIGHTS):
+        raise ValueError("candidate carries the wrong number of marks")
+    for mark in marks:
+        if not isinstance(mark, int) or mark < 0 or mark > 10:
+            raise ValueError(f"mark {mark!r} sits outside 0..10")
+    size = len(line)
+    if size < 1 or size > CHAR_LIMIT:
+        raise ValueError(f"line runs {size} characters, outside 1..{CHAR_LIMIT}")
+    if line != line.strip():
+        raise ValueError("line carries leading or trailing whitespace")
+    if not line.strip():
+        raise ValueError("line holds nothing but whitespace")
+    if "\n" in line or "\r" in line:
+        raise ValueError("line spills onto more than one line")
+    folded = line.lower()
+    for stale in STALE_BITS:
+        if stale in folded:
+            raise ValueError(f"line leans on a stock phrase: {stale!r}")
 
 
-def run():
-    '''Pick the strongest draft, write it out, and confirm the file.'''
-    winner = choose(DRAFTS)
-    for draft in sorted(DRAFTS, key=lambda item: (-item.total, len(item.text))):
-        print(f"{draft.total:>2} pts | {draft.text}")
-    ENTRY.parent.mkdir(parents=True, exist_ok=True)
-    ENTRY.write_text(winner.text, encoding="utf-8")
-    digest = confirm_written(winner.text)
-    print(f"winner ({len(winner.text)} chars): {winner.text}")
-    print(f"entry.txt confirmed sha256={digest}")
+def order(candidates):
+    """Vet every candidate, then rank them best first.
+
+    The ranking key is the weighted total, biggest first, with the shorter
+    line winning any tie, which keeps the choice fixed no matter how the
+    list is ordered.
+    """
+    scored = []
+    seen = set()
+    for candidate in candidates:
+        vet(candidate["line"], candidate["marks"])
+        if candidate["line"] in seen:
+            raise ValueError(f"the same line was drafted twice: {candidate['line']!r}")
+        seen.add(candidate["line"])
+        scored.append((tally(candidate["marks"]), candidate))
+    scored.sort(key=lambda pair: (-pair[0], len(pair[1]["line"])))
+    return scored
 
 
-_IS_MAIN = __name__ == "__main__"
-if _IS_MAIN:
-    run()
+def show(scored):
+    """Print the ranking table so a reader can see why the winner won."""
+    print("ranked candidates (weighted total first, shorter wins ties):")
+    for place, (total, candidate) in enumerate(scored, start=1):
+        plain = plain_total(candidate["marks"])
+        print(f"{place:>2}. weighted {total:>3} / plain {plain:>2} | {candidate['line']}")
+    best, second = scored[0], scored[1]
+    print(f"margin over the runner-up: {best[0] - second[0]} pts")
+    print(f"winner's reasoning: {scored[0][1]['why']}")
+
+
+def write_entry(path, text):
+    """Write the winning line out and make the file world-readable."""
+    folder = os.path.dirname(path)
+    if folder:
+        os.makedirs(folder, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(text)
+    os.chmod(path, 0o644)
+
+
+def confirm_entry(path, expected):
+    """Read the file back and prove it holds exactly the winning line.
+
+    The scorer grades the bytes on disk, not what this program prints, so
+    the check re-reads the file: same SHA-256 as the chosen line, 1 to 159
+    characters, one line only, and no leading or trailing blank space.
+    """
+    with open(path, "rb") as handle:
+        raw = handle.read()
+    actual = hashlib.sha256(raw).hexdigest()
+    wanted_hash = hashlib.sha256(expected.encode("utf-8")).hexdigest()
+    if actual != wanted_hash:
+        raise ValueError("entry file on disk differs from the chosen line")
+    text = raw.decode("utf-8")
+    if not text.strip():
+        raise ValueError("entry file holds only whitespace")
+    if len(text) < 1 or len(text) > CHAR_LIMIT:
+        raise ValueError("entry file breaks the 1..159 character gate")
+    if "\n" in text or "\r" in text:
+        raise ValueError("entry file holds a line break")
+    return actual
+
+
+def dump_scores(scored):
+    """Return the ranking as JSON, for anyone who wants to audit the pick."""
+    rows = []
+    for total, candidate in scored:
+        rows.append(
+            {
+                "line": candidate["line"],
+                "weighted": total,
+                "plain": plain_total(candidate["marks"]),
+                "marks": dict(zip(CRITERIA, candidate["marks"])),
+                "why": candidate["why"],
+            }
+        )
+    return json.dumps(rows, ensure_ascii=False, indent=2)
+
+
+def main():
+    """Rank the drafts, write the winner out, and confirm the file."""
+    scored = order(CANDIDATES)
+    show(scored)
+    winner = scored[0][1]["line"]
+    write_entry(ENTRY_PATH, winner)
+    digest = confirm_entry(ENTRY_PATH, winner)
+    print(f"winner ({len(winner)} chars): {winner}")
+    print(f"entry confirmed sha256={digest}")
+    print("full ranking (JSON):")
+    print(dump_scores(scored))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
